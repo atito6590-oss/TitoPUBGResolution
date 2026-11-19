@@ -494,68 +494,120 @@ def _parse_edid_monitor_name_and_max_hz(device_id: str) -> tuple[Optional[str], 
     return None, None
 
 
+
 def detect_gpu() -> GPUInfo:
-    """Detect NVIDIA GPU using NVAPI, nvidia-smi, and Windows WMI."""
+    """Detect the actual NVIDIA GPU without relying on the first display adapter."""
+
     nvapi = NvApiBridge()
-    nvapi_res = nvapi.get_driver_and_gpu()
-    if nvapi_res:
-        gpu_name, drv = nvapi_res
+
+    # First try NVAPI.
+    try:
+        nvapi_res = nvapi.get_driver_and_gpu()
+        if nvapi_res:
+            gpu_name, driver_version = nvapi_res
+            return GPUInfo(
+                name=gpu_name,
+                vendor="NVIDIA",
+                driver_version=driver_version,
+                is_nvidia=True,
+                nvapi_available=nvapi.initialized,
+            )
+    except Exception:
+        pass
+
+    if not IS_WINDOWS:
         return GPUInfo(
-            name=gpu_name,
-            vendor="NVIDIA",
-            driver_version=drv,
-            is_nvidia=True,
-            nvapi_available=True,
+            name="Windows required",
+            vendor="Unknown",
+            driver_version="Unknown",
+            is_nvidia=False,
+            nvapi_available=False,
         )
 
-    if IS_WINDOWS:
-        # Fallback 1: nvidia-smi
-        for smi_path in (
-            "nvidia-smi",
-            r"C:\Windows\System32\nvidia-smi.exe",
-            r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
-        ):
-            try:
-                out = subprocess.check_output(
-                    [smi_path, "--query-gpu=name,driver_version,memory.total", "--format=csv,noheader,nounits"],
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    timeout=3,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                ).strip()
-                if out:
-                    first_line = out.splitlines()[0]
-                    cols = [c.strip() for c in first_line.split(",")]
-                    return GPUInfo(
-                        name=cols[0],
-                        vendor="NVIDIA",
-                        driver_version=cols[1] if len(cols) > 1 else "Unknown",
-                        is_nvidia=True,
-                        nvapi_available=nvapi.initialized,
-                        vram_mb=int(float(cols[2])) if len(cols) > 2 and cols[2].isdigit() else None,
-                    )
-            except Exception:
-                continue
+    # Try nvidia-smi.
+    smi_paths = (
+        "nvidia-smi",
+        r"C:\Windows\System32\nvidia-smi.exe",
+        r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe",
+    )
 
-        # Fallback 2: EnumDisplayDevicesW adapter string
-        dd = DISPLAY_DEVICEW()
-        dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
-        if ctypes.windll.user32.EnumDisplayDevicesW(None, 0, ctypes.byref(dd), 0):
-            adapter = dd.DeviceString.strip()
-            is_nv = "nvidia" in adapter.lower()
+    for smi_path in smi_paths:
+        try:
+            output = subprocess.check_output(
+                [
+                    smi_path,
+                    "--query-gpu=name,driver_version,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=5,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).strip()
+
+            if output:
+                columns = [item.strip() for item in output.splitlines()[0].split(",")]
+                return GPUInfo(
+                    name=columns[0],
+                    vendor="NVIDIA",
+                    driver_version=columns[1] if len(columns) > 1 else "Unknown",
+                    is_nvidia=True,
+                    nvapi_available=nvapi.initialized,
+                    vram_mb=(
+                        int(float(columns[2]))
+                        if len(columns) > 2 and columns[2]
+                        else None
+                    ),
+                )
+        except Exception:
+            continue
+
+    # Enumerate all Windows display adapters, not only adapter zero.
+    first_adapter = None
+    user32 = ctypes.windll.user32
+
+    for index in range(32):
+        adapter = DISPLAY_DEVICEW()
+        adapter.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+
+        result = user32.EnumDisplayDevicesW(
+            None, index, ctypes.byref(adapter), 0
+        )
+
+        if not result:
+            break
+
+        adapter_name = adapter.DeviceString.strip()
+
+        if not adapter_name:
+            continue
+
+        if first_adapter is None:
+            first_adapter = adapter_name
+
+        if "nvidia" in adapter_name.lower():
             return GPUInfo(
-                name=adapter or "Unknown GPU",
-                vendor="NVIDIA" if is_nv else "Display Adapter",
-                driver_version="Windows WDDM",
-                is_nvidia=is_nv,
+                name=adapter_name,
+                vendor="NVIDIA",
+                driver_version="Windows Display Driver",
+                is_nvidia=True,
                 nvapi_available=nvapi.initialized,
             )
 
+    if first_adapter:
+        return GPUInfo(
+            name=first_adapter,
+            vendor="Other display adapter",
+            driver_version="Unknown",
+            is_nvidia=False,
+            nvapi_available=nvapi.initialized,
+        )
+
     return GPUInfo(
-        name="NVIDIA GeForce RTX (Simulated / Non-Windows Host)",
-        vendor="NVIDIA",
-        driver_version="566.14",
-        is_nvidia=True,
+        name="No display adapter detected",
+        vendor="Unknown",
+        driver_version="Unknown",
+        is_nvidia=False,
         nvapi_available=False,
     )
 
