@@ -461,7 +461,7 @@ class MainWindow(QMainWindow):
 
         tabs.addTab(modes_tab, "Supported Monitor Modes")
 
-        split.addLayout(tabs, 6)
+        split.addWidget(tabs, 6)
         body_layout.addLayout(split, 1)
         main_layout.addWidget(body, 1)
 
