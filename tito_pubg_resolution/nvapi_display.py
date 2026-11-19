@@ -612,33 +612,12 @@ def detect_gpu() -> GPUInfo:
     )
 
 
+
 def detect_monitors() -> list[MonitorInfo]:
-    """Enumerate active displays and read all hardware-supported modes and refresh rates."""
+    """Detect real connected monitors and enumerate Windows-supported modes."""
+
     if not IS_WINDOWS:
-        # Safe preview fallback when running UI inspection on Linux/macOS
-        sample_hz = [60, 75, 100, 120, 144, 165, 240]
-        modes = [
-            DisplayMode(w, h, hz)
-            for (w, h) in [(2560, 1440), (1920, 1440), (1920, 1080), (1720, 1620), (1728, 1080), (1280, 960)]
-            for hz in sample_hz
-        ]
-        return [
-            MonitorInfo(
-                device_name=r"\\.\DISPLAY1",
-                friendly_name="ASUS ROG Swift PG279QM (Preview Mode)",
-                adapter_name="NVIDIA GeForce RTX",
-                device_id="MONITOR\\AUS27A1",
-                is_primary=True,
-                current_width=2560,
-                current_height=1440,
-                current_hz=240,
-                native_width=2560,
-                native_height=1440,
-                max_supported_hz=240,
-                supported_hz_list=sample_hz,
-                supported_modes=modes,
-            )
-        ]
+        return []
 
     user32 = ctypes.windll.user32
     monitors: list[MonitorInfo] = []
@@ -647,8 +626,12 @@ def detect_monitors() -> list[MonitorInfo]:
     while True:
         dd = DISPLAY_DEVICEW()
         dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
-        if not user32.EnumDisplayDevicesW(None, idx, ctypes.byref(dd), 0):
+
+        if not user32.EnumDisplayDevicesW(
+            None, idx, ctypes.byref(dd), 0
+        ):
             break
+
         idx += 1
 
         if not (dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP):
@@ -656,61 +639,131 @@ def detect_monitors() -> list[MonitorInfo]:
 
         device_name = dd.DeviceName
         adapter_name = dd.DeviceString
-        is_primary = bool(dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
+        is_primary = bool(
+            dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE
+        )
 
-        # Query attached monitor device ID & friendly name
+        # Detect the physical monitor.
         mon_dd = DISPLAY_DEVICEW()
         mon_dd.cb = ctypes.sizeof(DISPLAY_DEVICEW)
+
         mon_friendly = "Generic PnP Monitor"
         mon_id = ""
-        edid_max_hz = None
-        if user32.EnumDisplayDevicesW(device_name, 0, ctypes.byref(mon_dd), 0):
-            mon_id = mon_dd.DeviceID
-            edid_name, edid_max_hz = _parse_edid_monitor_name_and_max_hz(mon_id)
-            mon_friendly = edid_name or mon_dd.DeviceString or mon_friendly
 
-        # Current mode
+        if user32.EnumDisplayDevicesW(
+            device_name, 0, ctypes.byref(mon_dd), 0
+        ):
+            mon_id = mon_dd.DeviceID
+            edid_name, _ = _parse_edid_monitor_name_and_max_hz(mon_id)
+            mon_friendly = (
+                edid_name or mon_dd.DeviceString or mon_friendly
+            )
+
+        # Read current display mode.
         cur_dm = DEVMODEW()
         cur_dm.dmSize = ctypes.sizeof(DEVMODEW)
-        cur_w, cur_h, cur_hz = 1920, 1080, 60
-        if user32.EnumDisplaySettingsExW(device_name, ENUM_CURRENT_SETTINGS, ctypes.byref(cur_dm), 0):
+
+        cur_w = 0
+        cur_h = 0
+        cur_hz = 0
+
+        if user32.EnumDisplaySettingsExW(
+            device_name,
+            ENUM_CURRENT_SETTINGS,
+            ctypes.byref(cur_dm),
+            0,
+        ):
             cur_w = int(cur_dm.dmPelsWidth)
             cur_h = int(cur_dm.dmPelsHeight)
             cur_hz = int(cur_dm.dmDisplayFrequency)
 
-        # Enumerate all driver-supported modes
+        # Enumerate modes reported by the Windows display driver.
         seen_modes: set[tuple[int, int, int]] = set()
         modes: list[DisplayMode] = []
         hz_set: set[int] = set()
-        max_w, max_h = cur_w, cur_h
 
-        mode_idx = 0
-        while True:
-            dm = DEVMODEW()
-            dm.dmSize = ctypes.sizeof(DEVMODEW)
-            if not user32.EnumDisplaySettingsExW(device_name, mode_idx, ctypes.byref(dm), EDS_RAWMODE):
-                break
-            mode_idx += 1
-            if dm.dmBitsPerPel != 32:
-                continue
-            w = int(dm.dmPelsWidth)
-            h = int(dm.dmPelsHeight)
-            hz = int(dm.dmDisplayFrequency)
-            if hz < 50:
-                continue
-            key = (w, h, hz)
-            if key not in seen_modes:
+        max_w = cur_w
+        max_h = cur_h
+
+        for flags in (EDS_RAWMODE, 0):
+            mode_idx = 0
+            found_mode = False
+
+            while True:
+                dm = DEVMODEW()
+                dm.dmSize = ctypes.sizeof(DEVMODEW)
+
+                result = user32.EnumDisplaySettingsExW(
+                    device_name,
+                    mode_idx,
+                    ctypes.byref(dm),
+                    flags,
+                )
+
+                if not result:
+                    break
+
+                mode_idx += 1
+
+                w = int(dm.dmPelsWidth)
+                h = int(dm.dmPelsHeight)
+                hz = int(dm.dmDisplayFrequency)
+                bpp = int(dm.dmBitsPerPel)
+
+                if w <= 0 or h <= 0 or bpp != 32 or hz < 50:
+                    continue
+
+                found_mode = True
+                key = (w, h, hz)
+
+                if key in seen_modes:
+                    continue
+
                 seen_modes.add(key)
-                modes.append(DisplayMode(width=w, height=h, refresh_hz=hz, bits_per_pel=32))
-            if 60 <= hz <= 300:
-                hz_set.add(hz)
-            if w * h > max_w * max_h:
-                max_w, max_h = w, h
 
-        modes.sort(key=lambda m: (m.width * m.height, m.refresh_hz), reverse=True)
-        driver_max_hz = max(hz_set) if hz_set else cur_hz
-        max_supported_hz = min(300, max(driver_max_hz, edid_max_hz or driver_max_hz))
-        supported_hz = sorted(hz_set) if hz_set else [cur_hz]
+                modes.append(
+                    DisplayMode(
+                        width=w,
+                        height=h,
+                        refresh_hz=hz,
+                        bits_per_pel=bpp,
+                    )
+                )
+
+                hz_set.add(hz)
+
+                if w * h > max_w * max_h:
+                    max_w, max_h = w, h
+
+            # Try standard enumeration if raw enumeration found nothing.
+            if found_mode:
+                break
+
+        # Keep the actual current mode if the driver did not list it.
+        if cur_w > 0 and cur_h > 0 and cur_hz >= 50:
+            key = (cur_w, cur_h, cur_hz)
+
+            if key not in seen_modes:
+                modes.append(
+                    DisplayMode(
+                        width=cur_w,
+                        height=cur_h,
+                        refresh_hz=cur_hz,
+                        bits_per_pel=32,
+                    )
+                )
+                hz_set.add(cur_hz)
+
+        modes.sort(
+            key=lambda m: (
+                m.width * m.height,
+                m.refresh_hz,
+            ),
+            reverse=True,
+        )
+
+        max_supported_hz = max(hz_set) if hz_set else cur_hz
+        supported_hz = sorted(hz_set)
 
         monitors.append(
             MonitorInfo(
