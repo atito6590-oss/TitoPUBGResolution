@@ -332,43 +332,86 @@ class NvApiBridge:
 
 
 
+    
     def get_driver_and_gpu(self) -> Optional[tuple[str, str]]:
         """Read the actual NVIDIA GPU name and driver version through NVAPI."""
 
-    if not self.initialized:
-        return None
+        if not self.initialized:
+            return None
 
-    try:
-        get_drv = self._get_func(
-            NVAPI_ID_SYS_GET_DRIVER_VERSION,
-            ctypes.c_int,
-            ctypes.POINTER(ctypes.c_uint32),
-            ctypes.POINTER(ctypes.c_char),
-        )
-
-        driver_ver = "Unknown"
-
-        if get_drv:
-            ver = ctypes.c_uint32(0)
-            branch = ctypes.create_string_buffer(64)
-
-            status = get_drv(
-                ctypes.byref(ver),
-                branch,
+        try:
+            get_drv = self._get_func(
+                NVAPI_ID_SYS_GET_DRIVER_VERSION,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_uint32),
+                ctypes.POINTER(ctypes.c_char),
             )
 
-            if status == 0 and ver.value:
-                driver_ver = f"{ver.value / 100:.2f}"
+            driver_ver = "Unknown"
 
-        enum_gpus = self._get_func(
-            NVAPI_ID_ENUM_PHYSICAL_GPUS,
-            ctypes.c_int,
-            ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(ctypes.c_uint32),
-        )
+            if get_drv:
+                ver = ctypes.c_uint32(0)
+                branch = ctypes.create_string_buffer(64)
 
-        if not enum_gpus:
+                status = get_drv(
+                    ctypes.byref(ver),
+                    branch,
+                )
+
+                if status == 0 and ver.value:
+                    driver_ver = f"{ver.value / 100:.2f}"
+
+            enum_gpus = self._get_func(
+                NVAPI_ID_ENUM_PHYSICAL_GPUS,
+                ctypes.c_int,
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.POINTER(ctypes.c_uint32),
+            )
+
+            if not enum_gpus:
+                return None
+
+            handles = (ctypes.c_void_p * 64)()
+            count = ctypes.c_uint32(0)
+
+            status = enum_gpus(handles, ctypes.byref(count))
+
+            if status != 0 or count.value == 0 or not handles[0]:
+                return None
+
+            get_name = self._get_func(
+                NVAPI_ID_GPU_GET_FULL_NAME,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_char),
+            )
+
+            if not get_name:
+                return None
+
+            name_buffer = ctypes.create_string_buffer(64)
+
+            status = get_name(
+                handles[0],
+                name_buffer,
+            )
+
+            if status != 0:
+                return None
+
+            gpu_name = name_buffer.value.decode(
+                "ascii",
+                errors="replace",
+            ).strip()
+
+            if not gpu_name:
+                return None
+
+            return gpu_name, driver_ver
+
+        except Exception:
             return None
+
 
         handles = (ctypes.c_void_p * 64)()
         count = ctypes.c_uint32(0)
