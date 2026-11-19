@@ -333,7 +333,7 @@ class NvApiBridge:
 
 
     def get_driver_and_gpu(self) -> Optional[tuple[str, str]]:
-    """Read the actual NVIDIA GPU name and driver version through NVAPI."""
+        """Read the actual NVIDIA GPU name and driver version through NVAPI."""
 
     if not self.initialized:
         return None
