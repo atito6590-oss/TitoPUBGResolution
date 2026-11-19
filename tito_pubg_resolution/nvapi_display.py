@@ -149,7 +149,7 @@ class NV_TIMING(ctypes.Structure):
         ("VSyncWidth", ctypes.c_uint16),
         ("VTotal", ctypes.c_uint16),
         ("VSyncPol", ctypes.c_uint8),
-        ("interlaced", ctypes.c_uint8),
+        ("interlaced", ctypes.c_uint16),
         ("pclk", ctypes.c_uint32),  # in 10 kHz units
         ("etc", NV_TIMINGEXT),
     ]
