@@ -290,8 +290,9 @@ def compute_cvt_rb_timing(width: int, height: int, refresh_hz: int) -> NV_TIMING
     return timing
 
 
+
 class NvApiBridge:
-    """Lightweight ctypes wrapper around nvapi64.dll for headless custom resolution creation."""
+    """Lightweight ctypes wrapper around nvapi64.dll."""
 
     def __init__(self) -> None:
         self.dll = None
@@ -303,6 +304,7 @@ class NvApiBridge:
     def _load(self) -> None:
         if not IS_WINDOWS:
             return
+
         try:
             self.dll = ctypes.WinDLL("nvapi64.dll")
             query_addr = self.dll.nvapi_QueryInterface
@@ -313,28 +315,33 @@ class NvApiBridge:
             init_ptr = self._query_fn(NVAPI_ID_INITIALIZE)
             if not init_ptr:
                 return
+
             init_fn = ctypes.CFUNCTYPE(ctypes.c_int)(init_ptr)
+
             if init_fn() == 0:
                 self.initialized = True
+
         except Exception:
             self.initialized = False
 
     def _get_func(self, func_id: int, restype, *argtypes):
         if not self.initialized or not self._query_fn:
             return None
+
         if func_id not in self._funcs:
             ptr = self._query_fn(func_id)
+
             if not ptr:
                 return None
-            self._funcs[func_id] = ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
+
+            self._funcs[func_id] = ctypes.CFUNCTYPE(
+                restype, *argtypes
+            )(ptr)
+
         return self._funcs[func_id]
 
-
-
-
-    
     def get_driver_and_gpu(self) -> Optional[tuple[str, str]]:
-        """Read the actual NVIDIA GPU name and driver version through NVAPI."""
+        """Read NVIDIA GPU name and driver version through NVAPI."""
 
         if not self.initialized:
             return None
@@ -374,9 +381,12 @@ class NvApiBridge:
             handles = (ctypes.c_void_p * 64)()
             count = ctypes.c_uint32(0)
 
-            status = enum_gpus(handles, ctypes.byref(count))
+            status = enum_gpus(
+                handles,
+                ctypes.byref(count),
+            )
 
-            if status != 0 or count.value == 0 or not handles[0]:
+            if status != 0 or count.value == 0:
                 return None
 
             get_name = self._get_func(
@@ -412,74 +422,48 @@ class NvApiBridge:
         except Exception:
             return None
 
+    def get_display_id(
+        self, gdi_device_name: str
+    ) -> Optional[int]:
 
-        handles = (ctypes.c_void_p * 64)()
-        count = ctypes.c_uint32(0)
-
-        status = enum_gpus(handles, ctypes.byref(count))
-
-        if status != 0 or count.value == 0 or not handles[0]:
-            return None
-
-        get_name = self._get_func(
-            NVAPI_ID_GPU_GET_FULL_NAME,
-            ctypes.c_int,
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_char),
-        )
-
-        if not get_name:
-            return None
-
-        name_buffer = ctypes.create_string_buffer(64)
-
-        status = get_name(
-            handles[0],
-            name_buffer,
-        )
-
-        if status != 0:
-            return None
-
-        gpu_name = name_buffer.value.decode(
-            "ascii",
-            errors="replace",
-        ).strip()
-
-        if not gpu_name:
-            return None
-
-        return gpu_name, driver_ver
-
-    except Exception:
-        return None
-
-
-    def get_display_id(self, gdi_device_name: str) -> Optional[int]:
         if not self.initialized:
             return None
+
         fn = self._get_func(
             NVAPI_ID_DISP_GET_DISPLAY_ID_BY_NAME,
             ctypes.c_int,
             ctypes.c_char_p,
             ctypes.POINTER(ctypes.c_uint32),
         )
+
         if not fn:
             return None
+
         display_id = ctypes.c_uint32(0)
-        status = fn(gdi_device_name.encode("ascii", errors="ignore"), ctypes.byref(display_id))
+
+        status = fn(
+            gdi_device_name.encode("ascii", errors="ignore"),
+            ctypes.byref(display_id),
+        )
+
         if status == 0:
             return int(display_id.value)
+
         return None
 
     def create_and_save_custom_resolution(
-        self, gdi_device_name: str, width: int, height: int, refresh_hz: int
+        self,
+        gdi_device_name: str,
+        width: int,
+        height: int,
+        refresh_hz: int,
     ) -> tuple[bool, str]:
-        """Register custom timing in NVIDIA driver via NVAPI without opening NVIDIA Control Panel."""
+
         if not self.initialized:
             return False, "NVAPI unavailable (nvapi64.dll not initialized)."
 
         display_id = self.get_display_id(gdi_device_name)
+
         if display_id is None:
             return False, f"Could not resolve NVAPI displayId for {gdi_device_name}."
 
@@ -490,6 +474,7 @@ class NvApiBridge:
             ctypes.c_uint32,
             ctypes.POINTER(NV_CUSTOM_DISPLAY),
         )
+
         save_fn = self._get_func(
             NVAPI_ID_DISP_SAVE_CUSTOM_DISPLAY,
             ctypes.c_int,
@@ -498,6 +483,7 @@ class NvApiBridge:
             ctypes.c_uint32,
             ctypes.c_uint32,
         )
+
         if not try_fn or not save_fn:
             return False, "NVAPI custom timing entrypoints not exposed by current driver."
 
@@ -506,25 +492,36 @@ class NvApiBridge:
         custom.width = width
         custom.height = height
         custom.depth = 32
-        custom.colorFormat = 0  # NV_FORMAT_UNKNOWN / default RGBA8
-        custom.srcPartition = (ctypes.c_float * 4)(0.0, 0.0, 1.0, 1.0)
+        custom.colorFormat = 0
+        custom.srcPartition = (ctypes.c_float * 4)(
+            0.0, 0.0, 1.0, 1.0
+        )
         custom.xRatio = 1.0
         custom.yRatio = 1.0
-        custom.timing = compute_cvt_rb_timing(width, height, refresh_hz)
+        custom.timing = compute_cvt_rb_timing(
+            width, height, refresh_hz
+        )
         custom.hwModeSetOnly = 0
 
         disp_ids = (ctypes.c_uint32 * 1)(display_id)
         arr = (NV_CUSTOM_DISPLAY * 1)(custom)
 
         status_try = try_fn(disp_ids, 1, arr)
+
         if status_try != 0:
-            return False, f"NvAPI_DISP_TryCustomDisplay failed with code {status_try}."
+            return False, (
+                f"NvAPI_DISP_TryCustomDisplay failed with code {status_try}."
+            )
 
         status_save = save_fn(disp_ids, 1, 1, 1)
-        if status_save != 0:
-            return False, f"NvAPI_DISP_SaveCustomDisplay failed with code {status_save}."
 
-        return True, "Custom timing registered directly in NVIDIA driver via NVAPI."
+        if status_save != 0:
+            return False, (
+                f"NvAPI_DISP_SaveCustomDisplay failed with code {status_save}."
+            )
+
+        return True, "Custom timing registered through NVIDIA NVAPI."
+
 
 
 def _parse_edid_monitor_name_and_max_hz(device_id: str) -> tuple[Optional[str], Optional[int]]:
