@@ -329,7 +329,9 @@ class NvApiBridge:
             self._funcs[func_id] = ctypes.CFUNCTYPE(restype, *argtypes)(ptr)
         return self._funcs[func_id]
 
-    
+
+
+
 def get_driver_and_gpu(self) -> Optional[tuple[str, str]]:
     """Read the actual NVIDIA GPU name and driver version through NVAPI."""
 
