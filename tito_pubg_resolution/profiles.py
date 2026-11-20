@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import subprocess
 import sys
@@ -189,23 +190,36 @@ def create_desktop_shortcut(
     def _ps_escape(val: str) -> str:
         return val.replace("'", "''")
 
-    ps_script = (
-        "$ws = New-Object -ComObject WScript.Shell; "
-        f"$sc = $ws.CreateShortcut('{_ps_escape(str(lnk_path))}'); "
-        f"$sc.TargetPath = '{_ps_escape(target_exe)}'; "
-        f"$sc.Arguments = '{_ps_escape(arguments)}'; "
-        f"$sc.WorkingDirectory = '{_ps_escape(working_dir)}'; "
-        f"$sc.IconLocation = '{_ps_escape(icon_loc)}'; "
-        f"$sc.Description = '{_ps_escape(description)}'; "
-        "$sc.Save();"
+    ps_script = "\n".join(
+        [
+            "$ErrorActionPreference = 'Stop'",
+            "$ws = New-Object -ComObject WScript.Shell",
+            f"$sc = $ws.CreateShortcut('{_ps_escape(str(lnk_path))}')",
+            f"$sc.TargetPath = '{_ps_escape(target_exe)}'",
+            f"$sc.Arguments = '{_ps_escape(arguments)}'",
+            f"$sc.WorkingDirectory = '{_ps_escape(working_dir)}'",
+            f"$sc.IconLocation = '{_ps_escape(icon_loc)}'",
+            f"$sc.Description = '{_ps_escape(description)}'",
+            "$sc.Save()",
+            f"if (-not (Test-Path -LiteralPath '{_ps_escape(str(lnk_path))}')) {{ throw 'Shortcut file was not created.' }}",
+        ]
     )
+    encoded_script = base64.b64encode(ps_script.encode("utf-16le")).decode("ascii")
 
     try:
-        subprocess.check_call(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script],
+        completed = subprocess.run(
+            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded_script],
+            check=False,
+            capture_output=True,
+            text=True,
             timeout=8,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or f"PowerShell exited with code {completed.returncode}").strip()
+            return False, f"Failed to create desktop shortcut: {detail}"
+        if not lnk_path.is_file():
+            return False, f"PowerShell finished without creating the shortcut: {lnk_path}"
         return True, f"Desktop shortcut created: {lnk_path}"
     except Exception as exc:
         return False, f"Failed to create desktop shortcut: {exc}"
