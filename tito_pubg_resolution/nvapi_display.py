@@ -38,6 +38,13 @@ DM_PELSHEIGHT = 0x00100000
 DM_BITSPERPEL = 0x00040000
 DM_DISPLAYFREQUENCY = 0x00400000
 DM_DISPLAYFLAGS = 0x00200000
+DM_DISPLAYFIXEDOUTPUT = 0x20000000
+
+# Values for DEVMODE.dmDisplayFixedOutput. Windows passes DMDFO_STRETCH to
+# the display driver so non-native modes fill the panel instead of letterboxing.
+DMDFO_DEFAULT = 0
+DMDFO_CENTER = 1
+DMDFO_STRETCH = 2
 
 CDS_UPDATEREGISTRY = 0x00000001
 CDS_TEST = 0x00000002
@@ -84,6 +91,20 @@ class POINTL(ctypes.Structure):
     _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
 
 
+class DEVMODE_ORIENTATION(ctypes.Structure):
+    _fields_ = [
+        ("dmDisplayOrientation", wintypes.DWORD),
+        ("dmDisplayFixedOutput", wintypes.DWORD),
+    ]
+
+
+class DEVMODE_DISPLAY_UNION(ctypes.Union):
+    _fields_ = [
+        ("dmPosition", POINTL),
+        ("orientation", DEVMODE_ORIENTATION),
+    ]
+
+
 class DEVMODEW(ctypes.Structure):
     _fields_ = [
         ("dmDeviceName", wintypes.WCHAR * CCHDEVICENAME),
@@ -92,9 +113,7 @@ class DEVMODEW(ctypes.Structure):
         ("dmSize", wintypes.WORD),
         ("dmDriverExtra", wintypes.WORD),
         ("dmFields", wintypes.DWORD),
-        ("dmPosition", POINTL),
-        ("dmDisplayOrientation", wintypes.DWORD),
-        ("dmDisplayFixedOutput", wintypes.DWORD),
+        ("display", DEVMODE_DISPLAY_UNION),
         ("dmColor", ctypes.c_short),
         ("dmDuplex", ctypes.c_short),
         ("dmYResolution", ctypes.c_short),
@@ -885,6 +904,7 @@ def apply_resolution(
     height: int,
     refresh_hz: int,
     persist: bool = True,
+    stretch: bool = False,
 ) -> ApplyResult:
     """Apply a resolution & refresh rate directly without opening NVIDIA Control Panel.
 
@@ -912,6 +932,9 @@ def apply_resolution(
         dm = DEVMODEW()
         dm.dmSize = ctypes.sizeof(DEVMODEW)
         dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY | DM_BITSPERPEL
+        if stretch:
+            dm.dmFields |= DM_DISPLAYFIXEDOUTPUT
+            dm.display.orientation.dmDisplayFixedOutput = DMDFO_STRETCH
         dm.dmPelsWidth = width
         dm.dmPelsHeight = height
         dm.dmDisplayFrequency = refresh_hz
