@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,12 +56,139 @@ from .profiles import (
 from .theme import enable_windows_dark_titlebar
 
 
+_AR_TEXT = {
+    "Confirm Display Settings": "تأكيد إعدادات الشاشة",
+    "Keep {width} × {height} at {hz} Hz?": "الاحتفاظ بدقة {width} × {height} ومعدل {hz} هرتز؟",
+    "Reverting to previous display settings automatically in {seconds} seconds.": "ستُستعاد إعدادات الشاشة السابقة تلقائيًا خلال {seconds} ثانية.",
+    "Revert Now": "استعادة الآن",
+    "Keep Changes": "الاحتفاظ بالتغييرات",
+    "Run as Admin": "تشغيل كمسؤول",
+    "Elevate privileges so NVAPI can register brand-new custom timings": "ارفع الصلاحيات للسماح لـ NVAPI بتسجيل أوضاع عرض مخصصة",
+    "Rescan Hardware": "إعادة فحص الأجهزة",
+    "Restore Original Display": "استعادة إعدادات الشاشة الأصلية",
+    "DETECTED GPU": "كرت الشاشة المكتشف",
+    "ACTIVE MONITOR": "الشاشة النشطة",
+    "CURRENT MODE": "الوضع الحالي",
+    "ORIGINAL BASELINE": "الإعداد الأصلي المحفوظ",
+    "Set Current": "حفظ الحالي",
+    "Save current active resolution as your new baseline restore target": "حفظ الدقة الحالية كإعداد الاستعادة الأصلي",
+    "PUBG COMPETITIVE PRESETS": "إعدادات PUBG التنافسية",
+    "Pro Stretched (1.06:1)": "تمديد احترافي (1.06:1)",
+    "Wider horizontal player models with crisp vertical visibility.": "مجال أفقي أوسع مع وضوح رأسي جيد.",
+    "4:3 Competitive HD": "تنافسي 4:3 عالي الدقة",
+    "High-density 4:3 stretched resolution for sharp mid-range tracking.": "دقة 4:3 ممددة لتتبّع أوضح للأهداف متوسطة المدى.",
+    "Load": "تحميل",
+    "Apply": "تطبيق",
+    "Apply & Stretch": "تطبيق وتمديد الصورة",
+    "CUSTOM RESOLUTION & REFRESH RATE": "دقة ومعدل تحديث مخصصان",
+    "Width (px)": "العرض (بكسل)",
+    "Height (px)": "الارتفاع (بكسل)",
+    "Aspect Ratio": "نسبة العرض إلى الارتفاع",
+    "Refresh Rate (60 Hz – 300 Hz)": "معدل التحديث (60–300 هرتز)",
+    "Monitor Max Allowed: {hz} Hz": "أقصى معدل للشاشة: {hz} هرتز",
+    "Set refresh rate to {hz} Hz": "ضبط معدل التحديث على {hz} هرتز",
+    "Exceeds {monitor} max supported {hz} Hz": "يتجاوز الحد الأقصى لشاشة {monitor} وهو {hz} هرتز",
+    "Apply Resolution Now": "تطبيق الدقة والتمديد",
+    "Save as Profile": "حفظ كملف إعداد",
+    "Profile name (e.g. PUBG Ranked 1720x1620)": "اسم الإعداد (مثل PUBG 1720x1620)",
+    "Save Current": "حفظ الحالي",
+    "Profile Name": "اسم الإعداد",
+    "Resolution": "الدقة",
+    "Refresh": "التحديث",
+    "Target": "الشاشة",
+    "Apply Selected": "تطبيق المحدد",
+    "Create Desktop Shortcut": "إنشاء اختصار على سطح المكتب",
+    "Create Restore Shortcut": "إنشاء اختصار للاستعادة",
+    "Delete": "حذف",
+    "Saved Profiles & Shortcuts": "الإعدادات المحفوظة والاختصارات",
+    "Filter supported modes (e.g. 1920, 1440, 240)": "تصفية الأوضاع المدعومة (مثل 1920 أو 1440 أو 240)",
+    "Load into Editor": "تحميل إلى المحرر",
+    "Width": "العرض",
+    "Height": "الارتفاع",
+    "Refresh Rate": "معدل التحديث",
+    "Color Depth": "عمق اللون",
+    "Supported Monitor Modes": "أوضاع الشاشة المدعومة",
+    "Ready. NVIDIA display driver and monitor modes loaded.": "جاهز. تم تحميل تعريف NVIDIA وأوضاع الشاشة.",
+    "Open Tito PUBG Resolution": "فتح مدير دقة PUBG",
+    "Restore Original Display Settings": "استعادة إعدادات الشاشة الأصلية",
+    "Exit": "خروج",
+    "NVAPI Ready": "NVAPI جاهز",
+    "WDDM Mode": "وضع WDDM",
+    " [Primary]": " [رئيسية]",
+    "Hardware rescanned successfully.": "اكتمل فحص الأجهزة.",
+    "Administrator Privileges Required": "مطلوب تشغيل كمسؤول",
+    "Restart Tito PUBG Resolution as Administrator to register this custom resolution via NVAPI?": "هل تريد إعادة تشغيل البرنامج كمسؤول لتسجيل هذه الدقة عبر NVAPI؟",
+    "Could Not Apply Resolution": "تعذر تطبيق الدقة",
+    "Select Profile": "اختر إعدادًا",
+    "Select a saved profile first.": "اختر إعدادًا محفوظًا أولًا.",
+    "Select a profile to create a desktop shortcut.": "اختر إعدادًا لإنشاء اختصار له.",
+    "Desktop Shortcut Created": "تم إنشاء الاختصار",
+    "Restore Shortcut Created": "تم إنشاء اختصار الاستعادة",
+    "Shortcut Failed": "فشل إنشاء الاختصار",
+    "Shortcut created": "تم إنشاء الاختصار",
+    "Restore Failed": "فشلت الاستعادة",
+    "No active display was detected.": "لم يتم اكتشاف شاشة نشطة.",
+}
+
+
+def _translate_text(text: str, language: str) -> str:
+    if language != "ar":
+        return text
+    if text in _AR_TEXT:
+        return _AR_TEXT[text]
+    if "Direct NVIDIA Custom Resolution & Refresh Rate Controller" in text:
+        version = text.split("  · ", 1)[0]
+        return f"{version}  ·  أداة مباشرة للتحكم في دقة الشاشة ومعدل التحديث عبر NVIDIA"
+    if text.startswith("Desktop shortcut created:"):
+        return "تم إنشاء اختصار سطح المكتب: " + text.split(":", 1)[1].strip()
+    if text.startswith("Failed to create desktop shortcut:"):
+        return "تعذر إنشاء اختصار سطح المكتب: " + text.split(":", 1)[1].strip()
+    if text.startswith("Error: "):
+        return "خطأ: " + text[7:]
+    match = re.fullmatch(r"(.+) \((.+) · (NVAPI Ready|WDDM Mode)\)", text)
+    if match:
+        tag = "NVAPI جاهز" if match.group(3) == "NVAPI Ready" else "وضع WDDM"
+        return f"{match.group(1)} ({match.group(2)} · {tag})"
+    match = re.fullmatch(r"Keep (\d+) × (\d+) at (\d+) Hz\?", text)
+    if match:
+        return f"الاحتفاظ بدقة {match.group(1)} × {match.group(2)} ومعدل {match.group(3)} هرتز؟"
+    match = re.fullmatch(r"Reverting to previous display settings automatically in (\d+) seconds\.", text)
+    if match:
+        return f"ستُستعاد إعدادات الشاشة السابقة تلقائيًا خلال {match.group(1)} ثانية."
+    match = re.fullmatch(r"Monitor Max Allowed: (\d+) Hz", text)
+    if match:
+        return f"أقصى معدل للشاشة: {match.group(1)} هرتز"
+    match = re.fullmatch(r"Set refresh rate to (\d+) Hz", text)
+    if match:
+        return f"ضبط معدل التحديث على {match.group(1)} هرتز"
+    match = re.fullmatch(r"Exceeds (.+) max supported (\d+) Hz", text)
+    if match:
+        return f"يتجاوز الحد الأقصى لشاشة {match.group(1)} وهو {match.group(2)} هرتز"
+    match = re.fullmatch(r"Restored original display: (\d+) × (\d+) @ (\d+) Hz\.", text)
+    if match:
+        return f"تمت استعادة الشاشة إلى {match.group(1)} × {match.group(2)} @ {match.group(3)} هرتز."
+    match = re.fullmatch(r"Reverted to (\d+) × (\d+) @ (\d+) Hz\.", text)
+    if match:
+        return f"تم الرجوع إلى {match.group(1)} × {match.group(2)} @ {match.group(3)} هرتز."
+    match = re.fullmatch(r"Loaded (\d+) × (\d+) @ (\d+) Hz into editor\.", text)
+    if match:
+        return f"تم تحميل {match.group(1)} × {match.group(2)} @ {match.group(3)} هرتز إلى المحرر."
+    match = re.fullmatch(r"Saved profile '(.+)'\.", text)
+    if match:
+        return f"تم حفظ الإعداد «{match.group(1)}»."
+    match = re.fullmatch(r"Deleted profile '(.+)'\.", text)
+    if match:
+        return f"تم حذف الإعداد «{match.group(1)}»."
+    return text
+
+
 class KeepChangesDialog(QDialog):
     """15-second auto-revert confirmation dialog protecting against unsupported timings."""
 
-    def __init__(self, width: int, height: int, hz: int, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, width: int, height: int, hz: int, parent: Optional[QWidget] = None, language: str = "en") -> None:
         super().__init__(parent)
-        self.setWindowTitle("Confirm Display Settings")
+        self.language = language
+        self.setWindowTitle(_translate_text("Confirm Display Settings", language))
         self.setModal(True)
         self.setFixedSize(440, 210)
         self.remaining = 15
@@ -69,12 +197,12 @@ class KeepChangesDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(12)
 
-        title = QLabel(f"Keep {width} × {height} at {hz} Hz?")
+        title = QLabel(_translate_text(f"Keep {width} × {height} at {hz} Hz?", language))
         title.setObjectName("AppTitle")
         layout.addWidget(title)
 
         self.countdown_label = QLabel(
-            f"Reverting to previous display settings automatically in {self.remaining} seconds."
+            _translate_text(f"Reverting to previous display settings automatically in {self.remaining} seconds.", language)
         )
         self.countdown_label.setWordWrap(True)
         self.countdown_label.setObjectName("MutedMeta")
@@ -85,10 +213,10 @@ class KeepChangesDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
 
-        revert_btn = QPushButton("Revert Now")
+        revert_btn = QPushButton(_translate_text("Revert Now", language))
         revert_btn.clicked.connect(self.reject)
 
-        keep_btn = QPushButton("Keep Changes")
+        keep_btn = QPushButton(_translate_text("Keep Changes", language))
         keep_btn.setObjectName("PrimaryBtn")
         keep_btn.setDefault(True)
         keep_btn.clicked.connect(self.accept)
@@ -108,7 +236,7 @@ class KeepChangesDialog(QDialog):
             self.reject()
             return
         self.countdown_label.setText(
-            f"Reverting to previous display settings automatically in {self.remaining} seconds."
+            _translate_text(f"Reverting to previous display settings automatically in {self.remaining} seconds.", self.language)
         )
 
 
@@ -119,6 +247,10 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
+        self._settings = QSettings("Tito", "PUBGResolution")
+        self.language = str(self._settings.value("language", "en"))
+        if self.language not in ("en", "ar"):
+            self.language = "en"
         self.setWindowTitle(__app_name__)
         self.setMinimumSize(1020, 720)
         self.resize(1120, 780)
@@ -140,6 +272,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._build_tray()
         self._sync_monitor_state()
+        self._apply_language()
 
         enable_windows_dark_titlebar(int(self.winId()))
 
@@ -177,6 +310,14 @@ class MainWindow(QMainWindow):
         header_layout.addLayout(title_col)
 
         header_layout.addStretch()
+
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("English", "en")
+        self.language_combo.addItem("العربية", "ar")
+        self.language_combo.setCurrentIndex(1 if self.language == "ar" else 0)
+        self.language_combo.setToolTip("Choose interface language / اختر لغة الواجهة")
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        header_layout.addWidget(self.language_combo)
 
         if not is_user_admin():
             admin_btn = QPushButton("Run as Admin")
@@ -467,7 +608,7 @@ class MainWindow(QMainWindow):
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready. NVIDIA display driver and monitor modes loaded.")
+        self._show_status("Ready. NVIDIA display driver and monitor modes loaded.")
 
     def _build_tray(self) -> None:
         self.tray_icon = QSystemTrayIcon(self.app_icon, self)
@@ -495,6 +636,82 @@ class MainWindow(QMainWindow):
         lbl.setObjectName("MutedMeta")
         return lbl
 
+    def _on_language_changed(self, index: int) -> None:
+        language = self.language_combo.itemData(index)
+        if language not in ("en", "ar"):
+            return
+        self.language = language
+        self._settings.setValue("language", language)
+        self._apply_language()
+
+    def _apply_language(self) -> None:
+        reverse = {translated: source for source, translated in _AR_TEXT.items()}
+
+        def localize(text: str) -> str:
+            source = reverse.get(text, text)
+            if source == "" or source is None:
+                return text
+            if self.language == "en":
+                return source
+            return _translate_text(source, self.language)
+
+        direction = Qt.RightToLeft if self.language == "ar" else Qt.LeftToRight
+        self.setLayoutDirection(direction)
+        self.centralWidget().setLayoutDirection(direction)
+
+        for widget in self.findChildren(QWidget):
+            if widget is self.language_combo:
+                continue
+            if hasattr(widget, "text") and hasattr(widget, "setText"):
+                try:
+                    widget.setText(localize(widget.text()))
+                except (RuntimeError, TypeError):
+                    pass
+            if hasattr(widget, "placeholderText") and hasattr(widget, "setPlaceholderText"):
+                widget.setPlaceholderText(localize(widget.placeholderText()))
+            if widget.toolTip():
+                widget.setToolTip(localize(widget.toolTip()))
+            if isinstance(widget, QComboBox):
+                for row in range(widget.count()):
+                    if widget is self.language_combo:
+                        continue
+                    current = widget.itemText(row)
+                    if current.endswith(" [Primary]") or current.endswith(" [رئيسية]"):
+                        suffix_len = 10 if current.endswith(" [Primary]") else len(" [رئيسية]")
+                        base = current[:-suffix_len]
+                        suffix = " [رئيسية]" if self.language == "ar" else " [Primary]"
+                        widget.setItemText(row, base + suffix)
+                    else:
+                        widget.setItemText(row, localize(current))
+            if isinstance(widget, QTabWidget):
+                for tab_index in range(widget.count()):
+                    widget.setTabText(tab_index, localize(widget.tabText(tab_index)))
+            if isinstance(widget, QTableWidget):
+                for col in range(widget.columnCount()):
+                    header = widget.horizontalHeaderItem(col)
+                    if header:
+                        header.setText(localize(header.text()))
+                for row in range(widget.rowCount()):
+                    for col in range(widget.columnCount()):
+                        item = widget.item(row, col)
+                        if item and item.text() in _AR_TEXT:
+                            item.setText(localize(item.text()))
+
+        for action in self.findChildren(QAction):
+            action.setText(localize(action.text()))
+            if action.toolTip():
+                action.setToolTip(localize(action.toolTip()))
+
+        if hasattr(self, "_gpu_value_en"):
+            self.gpu_value_lbl.setText(_translate_text(self._gpu_value_en, self.language))
+        self.hz_spin.setSuffix(" هرتز" if self.language == "ar" else " Hz")
+        if hasattr(self, "_last_status_en"):
+            self.status_bar.showMessage(_translate_text(self._last_status_en, self.language))
+
+    def _show_status(self, message: str) -> None:
+        self._last_status_en = message
+        self.status_bar.showMessage(_translate_text(message, self.language))
+
     def _build_preset_card(self, title: str, badge: str, desc: str, w: int, h: int) -> QFrame:
         card = QFrame()
         card.setObjectName("PresetCard")
@@ -514,7 +731,7 @@ class MainWindow(QMainWindow):
         btn_row.setSpacing(6)
         load_btn = QPushButton("Load")
         load_btn.clicked.connect(lambda _c=False, width=w, height=h: self._load_preset(width, height, apply_now=False))
-        apply_btn = QPushButton("Apply")
+        apply_btn = QPushButton("Apply & Stretch")
         apply_btn.setObjectName("PrimaryBtn")
         apply_btn.clicked.connect(lambda _c=False, width=w, height=h: self._load_preset(width, height, apply_now=True))
         btn_row.addWidget(load_btn)
@@ -528,7 +745,8 @@ class MainWindow(QMainWindow):
 
     def _sync_monitor_state(self) -> None:
         nvapi_tag = "NVAPI Ready" if self.gpu_info.nvapi_available else "WDDM Mode"
-        self.gpu_value_lbl.setText(f"{self.gpu_info.name} ({self.gpu_info.driver_version} · {nvapi_tag})")
+        self._gpu_value_en = f"{self.gpu_info.name} ({self.gpu_info.driver_version} · {nvapi_tag})"
+        self.gpu_value_lbl.setText(_translate_text(self._gpu_value_en, self.language))
 
         self.monitor_combo.blockSignals(True)
         self.monitor_combo.clear()
@@ -541,6 +759,7 @@ class MainWindow(QMainWindow):
         self._populate_profiles_table()
         self._populate_modes_table()
         self._update_aspect_preview()
+        self._apply_language()
 
     def _refresh_active_monitor_labels(self) -> None:
         mon = self.current_monitor
@@ -574,7 +793,7 @@ class MainWindow(QMainWindow):
         self.monitors = detect_monitors()
         self.current_monitor = self.monitors[0]
         self._sync_monitor_state()
-        self.status_bar.showMessage("Hardware rescanned successfully.")
+        self._show_status("Hardware rescanned successfully.")
 
     def _update_aspect_preview(self) -> None:
         w = self.width_spin.value()
@@ -626,7 +845,7 @@ class MainWindow(QMainWindow):
         prev_hz = self.current_monitor.current_hz
         device = self.current_monitor.device_name
 
-        result = apply_resolution(device, width, height, hz, persist=True)
+        result = apply_resolution(device, width, height, hz, persist=True, stretch=True)
         if not result.success:
             if result.requires_admin:
                 reply = QMessageBox.question(
@@ -639,24 +858,24 @@ class MainWindow(QMainWindow):
                     self.close()
                 return
             QMessageBox.warning(self, "Could Not Apply Resolution", result.message)
-            self.status_bar.showMessage(f"Error: {result.message}")
+            self._show_status(f"Error: {result.message}")
             return
 
-        dlg = KeepChangesDialog(width, height, hz, self)
+        dlg = KeepChangesDialog(width, height, hz, self, self.language)
         if dlg.exec() == QDialog.Accepted:
             self._rescan_hardware()
-            self.status_bar.showMessage(result.message)
+            self._show_status(result.message)
         else:
             apply_resolution(device, prev_w, prev_h, prev_hz, persist=True)
             self._rescan_hardware()
-            self.status_bar.showMessage(f"Reverted to {prev_w} × {prev_h} @ {prev_hz} Hz.")
+            self._show_status(f"Reverted to {prev_w} × {prev_h} @ {prev_hz} Hz.")
 
     def _restore_original_display(self) -> None:
         snap = self.baseline
         res = apply_resolution(snap.device_name, snap.width, snap.height, snap.refresh_hz, persist=True)
         if res.success:
             self._rescan_hardware()
-            self.status_bar.showMessage(
+            self._show_status(
                 f"Restored original display: {snap.width} × {snap.height} @ {snap.refresh_hz} Hz."
             )
         else:
@@ -665,7 +884,7 @@ class MainWindow(QMainWindow):
     def _set_current_as_baseline(self) -> None:
         self.baseline = update_original_snapshot(self.current_monitor)
         self._refresh_active_monitor_labels()
-        self.status_bar.showMessage("Updated baseline display snapshot to current mode.")
+        self._show_status("Updated baseline display snapshot to current mode.")
 
     def _populate_profiles_table(self) -> None:
         self.profiles_table.setRowCount(len(self.profiles))
@@ -699,7 +918,7 @@ class MainWindow(QMainWindow):
         self.width_spin.setValue(w)
         self.height_spin.setValue(h)
         self._select_hz(hz)
-        self.status_bar.showMessage(f"Loaded {w} × {h} @ {hz} Hz into editor.")
+        self._show_status(f"Loaded {w} × {h} @ {hz} Hz into editor.")
 
     def _save_current_as_profile(self) -> None:
         w = self.width_spin.value()
@@ -720,7 +939,7 @@ class MainWindow(QMainWindow):
         save_profiles(self.profiles)
         self.profile_name_input.clear()
         self._populate_profiles_table()
-        self.status_bar.showMessage(f"Saved profile '{name}'.")
+        self._show_status(f"Saved profile '{name}'.")
 
     def _apply_selected_profile(self) -> None:
         row = self.profiles_table.currentRow()
@@ -740,7 +959,7 @@ class MainWindow(QMainWindow):
         removed = self.profiles.pop(row)
         save_profiles(self.profiles)
         self._populate_profiles_table()
-        self.status_bar.showMessage(f"Deleted profile '{removed.name}'.")
+        self._show_status(f"Deleted profile '{removed.name}'.")
 
     def _create_shortcut_for_selected(self) -> None:
         row = self.profiles_table.currentRow()
@@ -755,7 +974,7 @@ class MainWindow(QMainWindow):
         )
         if ok:
             QMessageBox.information(self, "Desktop Shortcut Created", msg)
-            self.status_bar.showMessage(msg)
+            self._show_status(msg)
         else:
             QMessageBox.warning(self, "Shortcut Failed", msg)
 
@@ -767,7 +986,7 @@ class MainWindow(QMainWindow):
         )
         if ok:
             QMessageBox.information(self, "Restore Shortcut Created", msg)
-            self.status_bar.showMessage(msg)
+            self._show_status(msg)
         else:
             QMessageBox.warning(self, "Shortcut Failed", msg)
 
